@@ -66,16 +66,27 @@ func TestSingleSink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedConfig := sinksToConfigAST(
+	expectedConfig := sinksToConfigASTV2(
 		t,
 		[]namespaceSink{
 			{
-				Name:      "some-name",
+				Name:      "some-name-1",
 				Addr:      "example.com:12345",
 				Namespace: "some-namespace",
+				TLS: &tlsConfig{
+					InsecureSkipVerify: true,
+				},
 			},
 		},
-		[]clusterSink{},
+		[]clusterSink{
+			{
+				Name: "some-name-2",
+				Addr: "example.com:12345",
+				TLS: &tlsConfig{
+					InsecureSkipVerify: true,
+				},
+			},
+		},
 	)
 	if !cmp.Equal(f, expectedConfig) {
 		t.Fatal(cmp.Diff(f, expectedConfig))
@@ -1271,6 +1282,107 @@ outer:
 
 	return true
 })
+
+func sinksToConfigASTV2(
+	t *testing.T,
+	nsSinks []namespaceSink,
+	clSinks []clusterSink,
+	sections ...flbconfig.Section,
+) flbconfig.File {
+
+	for _, cs := range clSinks {
+		sections = append(sections, createOutputSection(cs))
+	}
+
+	for _, ns := range nsSinks {
+		sections = append(sections, createOutputSection(ns))
+	}
+
+	return flbconfig.File{
+		Sections: sections,
+	}
+}
+
+func createOutputSection(sink interface{}) flbconfig.Section {
+
+	var section flbconfig.Section = flbconfig.Section{
+		Name: "OUTPUT",
+	}
+
+	keyValues := []flbconfig.KeyValue{
+		{
+			Key:   "Name",
+			Value: "syslog",
+		},
+		{
+			Key:   "Match",
+			Value: "*",
+		},
+		{
+			Key:   "StatsAddr",
+			Value: "128.0.0.1:5000",
+		},
+	}
+
+	switch s := sink.(type) {
+	case namespaceSink:
+		keyValues = append(keyValues,
+			flbconfig.KeyValue{
+				Key:   "InstanceName",
+				Value: s.Name,
+			},
+			flbconfig.KeyValue{
+				Key:   "Addr",
+				Value: s.Addr,
+			},
+			flbconfig.KeyValue{
+				Key:   "Namespace",
+				Value: s.Namespace,
+			},
+		)
+		if s.TLS != nil {
+			keyValues = addTLSKeyValue(s.TLS, keyValues)
+		}
+
+	case clusterSink:
+		keyValues = append(keyValues,
+			flbconfig.KeyValue{
+				Key:   "InstanceName",
+				Value: s.Name,
+			},
+			flbconfig.KeyValue{
+				Key:   "Addr",
+				Value: s.Addr,
+			},
+			flbconfig.KeyValue{
+				Key:   "Cluster",
+				Value: "true",
+			},
+		)
+		if s.TLS != nil {
+			keyValues = addTLSKeyValue(s.TLS, keyValues)
+		}
+	}
+
+	section.KeyValues = keyValues
+
+	return section
+
+}
+
+func addTLSKeyValue(t *tlsConfig, kv []flbconfig.KeyValue) []flbconfig.KeyValue {
+	kv = append(kv, flbconfig.KeyValue{
+		Key:   "tls",
+		Value: "On",
+	})
+	if t.InsecureSkipVerify {
+		kv = append(kv, flbconfig.KeyValue{
+			Key:   "tls.verify",
+			Value: "On",
+		})
+	}
+	return kv
+}
 
 func sinksToConfigAST(
 	t *testing.T,
